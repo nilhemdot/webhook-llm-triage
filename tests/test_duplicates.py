@@ -1,9 +1,11 @@
 import json
+import time
 
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
+from app.store import Store
 from conftest import VALID_TRIAGE_RESULT, WEBHOOK_SECRET, claude_reply
 
 AUTH = {"X-Webhook-Secret": WEBHOOK_SECRET}
@@ -116,3 +118,39 @@ def test_bodies_differing_only_in_an_extra_unknown_field_are_not_duplicates(clie
     response = client.post("/intake", json={**intake_event, "form_response_id": "abc-123"}, headers=AUTH)
     assert response.json()["status"] == "processed"
     assert fake_claude.calls == 2
+
+
+DAY_S = 24 * 3600
+
+
+def stored_response(event_id="old"):
+    return json.dumps({"event_id": event_id, "status": "processed", "triage": VALID_TRIAGE_RESULT})
+
+
+def test_processed_intake_events_older_than_14_days_are_purged_at_startup(
+    configured_app, fake_claude, intake_event, data_dir
+):
+    store = Store(data_dir)
+    store.save_processed("expired-key", stored_response())
+    store.save_processed("fresh-key", stored_response())
+    store._db.execute("UPDATE events SET created_at = ? WHERE key = 'expired-key'", (time.time() - 15 * DAY_S,))
+    store._db.execute("UPDATE events SET created_at = ? WHERE key = 'fresh-key'", (time.time() - 13 * DAY_S,))
+    store.close()
+    with TestClient(configured_app) as client:
+        expired = client.post("/intake", json=intake_event, headers={**AUTH, "Idempotency-Key": "expired-key"})
+        fresh = client.post("/intake", json=intake_event, headers={**AUTH, "Idempotency-Key": "fresh-key"})
+    assert expired.json()["status"] == "processed"
+    assert fresh.json()["status"] == "duplicate"
+    assert fake_claude.calls == 1
+
+
+def test_expired_processed_intake_events_are_purged_on_a_later_write_without_a_restart(
+    client, fake_claude, intake_event, monkeypatch
+):
+    client.post("/intake", json=intake_event, headers={**AUTH, "Idempotency-Key": "first"})
+    later = time.time() + 15 * DAY_S
+    monkeypatch.setattr("app.store.time.time", lambda: later)
+    client.post("/intake", json=intake_event, headers={**AUTH, "Idempotency-Key": "second"})
+    response = client.post("/intake", json=intake_event, headers={**AUTH, "Idempotency-Key": "first"})
+    assert response.json()["status"] == "processed"
+    assert fake_claude.calls == 3

@@ -33,11 +33,11 @@ Use it when the service never processed the intake event: 401, 413, 429, a deplo
 
 Use it for intake events the service saved after a failure: 500, 502, 503 and 504. Do not use it for 400/422 dead letters caused by a broken Zap mapping: those payloads fail validation again; fix the Zap and use Zap replay instead.
 
-The dead letters are on the Render disk, so run the tool from the Render service's **Shell**, where `DATA_DIR` is already `/var/data`:
+The dead letters are on the Render disk, so run the tool from the Render service's **Shell**, where `DATA_DIR` is already `/var/data` and `WEBHOOK_SECRET` is already set. The tool reads the secret from that environment variable only; never type it on the command line.
 
 ```sh
-uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET" --dry-run
-uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET"
+uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com --dry-run
+uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com
 ```
 
 - `--dry-run` lists each dead letter's event id, received time and reason, and marks those older than 14 days. It sends and changes nothing.

@@ -1,6 +1,9 @@
 """Replay dead letters to /intake, and purge dead letters and replayed entries older than 14 days (D8).
 
-    DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET" [--dry-run]
+    DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com [--dry-run]
+
+The webhook secret is read from the WEBHOOK_SECRET environment variable (already set in the Render Shell),
+never from the command line, where it would land in shell history and the process list.
 
 Successes (200, including "duplicate") move to dead_letter.replayed.jsonl; failures stay in dead_letter.jsonl
 with their original received_at, so the 14-day purge still applies to them. Prints ids and reasons, never payloads.
@@ -38,7 +41,6 @@ def write_private(path: Path, text: str, append: bool = False) -> None:
 def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", required=True, help="service base URL, e.g. https://<app>.onrender.com")
-    parser.add_argument("--secret", required=True, help="the webhook secret")
     parser.add_argument("--dry-run", action="store_true", help="list dead letters; send and change nothing")
     args = parser.parse_args(argv)
 
@@ -56,6 +58,14 @@ def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> 
             print(e["event_id"], e["received_at"], e["reason"], "(older than 14 days: would be purged)" if expired(e) else "")
         return 0
 
+    secret = os.environ.get("WEBHOOK_SECRET", "")
+    if not secret:
+        print("replay_dlq: WEBHOOK_SECRET is not set; set it in the environment, not on the command line", file=sys.stderr)
+        return 2
+    if args.url.startswith("http://"):
+        print("replay_dlq: warning: --url is http://, so the webhook secret is sent unencrypted (fine for localhost only)",
+              file=sys.stderr)
+
     if not working.exists() and queue.exists():
         queue.replace(working)  # the app's next dead letter starts a fresh queue file, so nothing it writes is lost
         working.chmod(0o600)  # a rename keeps the old mode
@@ -70,7 +80,7 @@ def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> 
             response = client.post(
                 f"{args.url.rstrip('/')}/intake",
                 content=payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False).encode(),
-                headers={"Content-Type": "application/json", "X-Webhook-Secret": args.secret,
+                headers={"Content-Type": "application/json", "X-Webhook-Secret": secret,
                          "Idempotency-Key": e["key"], REPLAY_HEADER: "1"},
             )
             status = response.status_code

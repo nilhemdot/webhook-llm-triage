@@ -80,9 +80,11 @@ Every request leaves one JSON log line (`event_id`, `path`, `status`, `latency_m
 Every intake event that fails after the webhook secret check (400, 422, 500, 502, 503, 504) is appended to `DATA_DIR/dead_letter.jsonl` with its event id, idempotency key, received time, reason, error and **full payload**. The payload is kept so the event can be replayed; it goes to that file only, never to the logs.
 
 ```sh
-DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET" --dry-run  # list only
-DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET"
+DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com --dry-run  # list only
+DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com
 ```
+
+The tool reads the webhook secret from the `WEBHOOK_SECRET` environment variable only (never put it on the command line) and exits with an error if it is unset. It warns if `--url` is `http://`, since the secret would then travel unencrypted.
 
 A real run re-sends each dead letter with its original `Idempotency-Key`, moves successes to `dead_letter.replayed.jsonl`, keeps failures and exits 1 if any remain. It also deletes entries older than 14 days from both files. Replay requests carry `X-Dead-Letter-Replay: 1` so the service doesn't dead-letter them a second time.
 

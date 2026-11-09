@@ -1,4 +1,5 @@
-"""SQLite store in the data dir: processed intake events and their responses, keyed by idempotency key.
+"""SQLite store in the data dir: processed intake events and their responses, keyed by idempotency key,
+and the daily cap's count of LLM-calling intake events per UTC day.
 Also the dead-letter file, dead_letter.jsonl, next to it."""
 
 import json
@@ -19,6 +20,18 @@ class Store:
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS events (key TEXT PRIMARY KEY, status TEXT, response_json TEXT, created_at REAL)"
             )
+            self._db.execute("CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, count INT)")
+
+    def take_daily_cap_slot(self, day: str, cap: int) -> bool:
+        """Count one LLM-calling intake event for `day`, unless the daily cap is already reached."""
+        with self._lock:
+            row = self._db.execute("SELECT count FROM usage WHERE day = ?", (day,)).fetchone()
+            if (row[0] if row else 0) >= cap:
+                return False
+            self._db.execute(
+                "INSERT INTO usage VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET count = count + 1", (day,)
+            )
+            return True
 
     def processed_response(self, key: str) -> str | None:
         with self._lock:

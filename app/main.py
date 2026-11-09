@@ -7,7 +7,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -59,6 +59,11 @@ LLM_FAILURES: list[tuple[type[Exception] | tuple[type[Exception], ...], int, str
     # Last: any other API status error (400 rejected request, 404 unknown model, ...) means our request or settings are wrong.
     (anthropic.APIStatusError, 500, "config_error"),
 ]
+
+
+def utc_today() -> date:
+    return datetime.now(UTC).date()
+
 
 webhook_secret_header = APIKeyHeader(name="X-Webhook-Secret", auto_error=False)
 
@@ -177,6 +182,10 @@ def intake(
         request.state.event_id = duplicate.event_id  # log the original event_id so both deliveries can be traced
         request.state.outcome = "duplicate"
         return duplicate
+    # Outside the try below: a daily cap 429 is not a failure, so it is never dead-lettered.
+    if not store.take_daily_cap_slot(utc_today().isoformat(), int(os.environ.get("MAX_EVENTS_PER_DAY", "200"))):
+        request.state.error = "daily_cap_reached"
+        return JSONResponse(status_code=429, content={"error": "daily_cap_reached"})
     try:
         triage = classify(event)
     except Exception as exc:

@@ -5,10 +5,11 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import WEBHOOK_SECRET
+from conftest import WEBHOOK_SECRET, claude_reply
 from scripts.replay_dlq import main as replay
 
 AUTH = {"X-Webhook-Secret": WEBHOOK_SECRET}
+REFUSAL = httpx2.Response(200, json=claude_reply(stop_reason="refusal"))
 RATE_LIMITED = httpx2.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}})
 ARGS = ["--url", "http://testserver"]  # the secret comes from WEBHOOK_SECRET, set by configured_app
 
@@ -57,15 +58,29 @@ def test_replay_resends_dead_letter_to_intake_and_moves_it_to_replayed(client, f
     assert client.post("/intake", json=intake_event, headers=AUTH).json()["status"] == "duplicate"
 
 
-def test_replay_that_fails_again_leaves_exactly_one_dead_letter_with_original_received_at(
+def test_replay_that_fails_again_leaves_exactly_one_dead_letter_with_the_new_reason_and_original_received_at(
     client, fake_claude, intake_event, data_dir
 ):
     dead_letter_one_event(client, fake_claude, intake_event)
     [letter] = read(data_dir / "dead_letter.jsonl")
-    fake_claude.queue(RATE_LIMITED)
-    replay(ARGS, client=client)
-    assert read(data_dir / "dead_letter.jsonl") == [letter]
+    fake_claude.queue(REFUSAL)
+    assert replay(ARGS, client=client) == 1
+    [requeued] = read(data_dir / "dead_letter.jsonl")
+    assert requeued["reason"] == "llm_refused" and requeued["error"] != letter["error"]
+    assert requeued["key"] == letter["key"]
+    assert requeued["received_at"] == letter["received_at"]  # so the 14-day purge still applies
+    assert requeued["payload"] == letter["payload"]
     assert read(data_dir / "dead_letter.replayed.jsonl") == []
+
+
+def test_replay_answered_by_something_other_than_the_app_keeps_the_dead_letter_once(
+    client, fake_claude, intake_event, data_dir
+):
+    dead_letter_one_event(client, fake_claude, intake_event)
+    [letter] = read(data_dir / "dead_letter.jsonl")
+    proxy_error = httpx2.Client(transport=httpx2.MockTransport(lambda request: httpx2.Response(502, text="Bad Gateway")))
+    assert replay(ARGS, client=proxy_error) == 1
+    assert read(data_dir / "dead_letter.jsonl") == [letter]
 
 
 def test_replay_when_service_unreachable_keeps_dead_letter(client, fake_claude, intake_event, data_dir):

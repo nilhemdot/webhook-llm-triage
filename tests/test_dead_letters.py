@@ -112,3 +112,15 @@ def test_dead_letter_file_is_private_to_the_owner_even_under_a_permissive_umask(
     fake_claude.queue(RATE_LIMITED)
     client.post("/intake", json=intake_event, headers=AUTH)
     assert (data_dir / "dead_letter.jsonl").stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_dead_letter_replay_is_dead_lettered_again_keeping_its_original_received_at(
+    client, fake_claude, intake_event, data_dir
+):
+    fake_claude.queue(RATE_LIMITED)
+    received_at = "2026-11-01T09:00:00+00:00"
+    headers = {**AUTH, "Idempotency-Key": "form-response-1", "X-Dead-Letter-Replay": received_at}
+    assert client.post("/intake", json=intake_event, headers=headers).status_code == 503
+    [letter] = dead_letters(data_dir)
+    assert letter["reason"] == "llm_unavailable"
+    assert letter["received_at"] == received_at

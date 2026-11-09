@@ -5,8 +5,10 @@
 The webhook secret is read from the WEBHOOK_SECRET environment variable (already set in the Render Shell),
 never from the command line, where it would land in shell history and the process list.
 
-Successes (200, including "duplicate") move to dead_letter.replayed.jsonl; failures stay in dead_letter.jsonl
-with their original received_at, so the 14-day purge still applies to them. Prints ids and reasons, never payloads.
+Successes (200, including "duplicate") move to dead_letter.replayed.jsonl. A replay the app rejects after auth is
+dead-lettered again by the app, with its new reason and error but its original received_at, and replaces the old
+entry; any other failure (unreachable, proxy error, 401, daily cap) keeps the old entry in dead_letter.jsonl.
+Either way the 14-day purge still applies. Prints ids and reasons, never payloads.
 """
 
 import argparse
@@ -19,7 +21,7 @@ from pathlib import Path
 import httpx2
 
 RETENTION = timedelta(days=14)
-REPLAY_HEADER = "X-Dead-Letter-Replay"  # tells the app not to dead-letter the replay again; we keep failures here
+REPLAY_HEADER = "X-Dead-Letter-Replay"  # carries the original received_at for the app's re-queued dead letter
 
 
 def read(path: Path) -> list[dict]:
@@ -70,6 +72,7 @@ def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> 
         queue.replace(working)  # the app's next dead letter starts a fresh queue file, so nothing it writes is lost
         working.chmod(0o600)  # a rename keeps the old mode
     client = client or httpx2.Client(timeout=30.0)
+    queued_before = len(read(queue))  # dead letters the app writes from here on include our re-queued replays
     done, failed = [], []
     for e in read(working):
         if expired(e):
@@ -81,7 +84,7 @@ def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> 
                 f"{args.url.rstrip('/')}/intake",
                 content=payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False).encode(),
                 headers={"Content-Type": "application/json", "X-Webhook-Secret": secret,
-                         "Idempotency-Key": e["key"], REPLAY_HEADER: "1"},
+                         "Idempotency-Key": e["key"], REPLAY_HEADER: e["received_at"]},
             )
             status = response.status_code
         except httpx2.TransportError as exc:
@@ -94,7 +97,8 @@ def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> 
 
     replayed.parent.mkdir(parents=True, exist_ok=True)
     write_private(replayed, lines([e for e in read(replayed) if not expired(e)] + done))
-    write_private(queue, lines(failed), append=True)
+    requeued_by_app = {e["key"] for e in read(queue)[queued_before:]}
+    write_private(queue, lines([e for e in failed if e["key"] not in requeued_by_app]), append=True)
     working.unlink(missing_ok=True)
     print(f"replayed {len(done)}, still failing {len(failed)}")
     return 0 if not failed else 1

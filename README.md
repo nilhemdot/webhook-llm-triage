@@ -86,7 +86,7 @@ DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onren
 
 The tool reads the webhook secret from the `WEBHOOK_SECRET` environment variable only (never put it on the command line) and exits with an error if it is unset. It warns if `--url` is `http://`, since the secret would then travel unencrypted.
 
-A real run re-sends each dead letter with its original `Idempotency-Key`, moves successes to `dead_letter.replayed.jsonl`, keeps failures and exits 1 if any remain. It also deletes entries older than 14 days from both files. Replay requests carry `X-Dead-Letter-Replay: 1` so the service doesn't dead-letter them a second time.
+A real run re-sends each dead letter with its original `Idempotency-Key`, moves successes to `dead_letter.replayed.jsonl`, keeps failures and exits 1 if any remain. It also deletes entries older than 14 days from both files. Replay requests carry `X-Dead-Letter-Replay` with the original received time: a replay that fails again after the secret check is dead-lettered again with its new reason and error, replacing the old entry, and still ages out 14 days after it was first received.
 
 ## Deploy
 

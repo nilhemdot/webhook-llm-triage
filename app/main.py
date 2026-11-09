@@ -106,18 +106,25 @@ def idempotency_key(payload, header: str | None) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-# Sent by scripts/replay_dlq.py, which keeps its own failed dead letters with their original received_at.
+# Sent by scripts/replay_dlq.py with the dead letter's original received_at, so a replay that fails again is
+# re-queued with its new reason but still ages out 14 days after it was first received (D8).
 DEAD_LETTER_REPLAY_HEADER = "X-Dead-Letter-Replay"
+
+
+def received_at(request: Request) -> str:
+    try:
+        replayed = datetime.fromisoformat(request.headers.get(DEAD_LETTER_REPLAY_HEADER, ""))
+    except ValueError:
+        replayed = None
+    return replayed.isoformat() if replayed and replayed.tzinfo else datetime.now(UTC).isoformat()
 
 
 def dead_letter(request: Request, payload, reason: str, error) -> None:
     """Save a failed intake event to the dead-letter file. The payload goes there only, never to logs."""
-    if request.headers.get(DEAD_LETTER_REPLAY_HEADER):
-        return
     request.app.state.store.add_dead_letter({
         "event_id": request.state.event_id,
         "key": idempotency_key(payload, request.headers.get("Idempotency-Key")),
-        "received_at": datetime.now(UTC).isoformat(),
+        "received_at": received_at(request),
         "reason": reason,
         "error": error,
         "payload": payload,

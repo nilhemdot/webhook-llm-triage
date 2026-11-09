@@ -41,7 +41,7 @@ uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com
 ```
 
 - `--dry-run` lists each dead letter's event id, received time and reason, and marks those older than 14 days. It sends and changes nothing.
-- A real run re-sends each dead letter with its original `Idempotency-Key`, moves successes (200, including `duplicate`) to `dead_letter.replayed.jsonl`, keeps failures in `dead_letter.jsonl`, and deletes entries older than 14 days from both files. It exits 1 if any remain.
+- A real run re-sends each dead letter with its original `Idempotency-Key`, moves successes (200, including `duplicate`) to `dead_letter.replayed.jsonl`, keeps failures in `dead_letter.jsonl` (with the new failure's reason and error when the service rejected the replay), and deletes entries older than 14 days from both files. It exits 1 if any remain.
 - A replayed event counts toward the daily cap like any other LLM-calling intake event.
 - The service answers the replay but Zapier never sees it: Zap A doesn't write a sheet row for it. Add the row by hand from the replay's result, or use Zap replay instead when the run is still in Zap History.
 - If a run is interrupted, `dead_letter.replaying.jsonl` is left behind; the next run picks it up first.

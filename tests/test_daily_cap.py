@@ -1,9 +1,11 @@
 from datetime import date, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from conftest import WEBHOOK_SECRET
 from test_dead_letters import dead_letters
+from test_intake import log_lines
 
 AUTH = {"X-Webhook-Secret": WEBHOOK_SECRET}
 
@@ -66,3 +68,19 @@ def test_daily_cap_defaults_to_200(client, fake_claude, intake_event, monkeypatc
     for n in range(201):
         client.post("/intake", json=new_intake_event(intake_event, n), headers=AUTH)
     assert fake_claude.calls == 200
+
+
+@pytest.mark.parametrize("value", ["abc", "", "-1"])
+def test_invalid_max_events_per_day_is_a_config_error_with_a_log_line_and_no_claude_call(
+    client, fake_claude, intake_event, data_dir, monkeypatch, caplog, value
+):
+    monkeypatch.setenv("MAX_EVENTS_PER_DAY", value)
+    caplog.set_level("INFO")
+    response = client.post("/intake", json=intake_event, headers=AUTH)
+    assert response.status_code == 500
+    assert response.json() == {"error": "config_error"}
+    [line] = log_lines(caplog)
+    assert line["status"] == 500 and line["error"] == "config_error"
+    assert fake_claude.calls == 0
+    [letter] = dead_letters(data_dir)  # a failure after auth, so it can be replayed once the setting is fixed
+    assert letter["reason"] == "config_error"

@@ -1,8 +1,22 @@
 from collections.abc import Callable
+from functools import cache
+from time import monotonic  # noqa: F401  (tests swap this clock)
+
+import anthropic
 
 from app.models import IntakeEvent, TriageResult
 
 Classifier = Callable[[IntakeEvent], TriageResult]
+
+
+@cache
+def make_client() -> anthropic.Anthropic:
+    return anthropic.Anthropic(timeout=8.0, max_retries=1)
+
+
+def get_anthropic_client() -> anthropic.Anthropic:
+    """FastAPI dependency: the Claude client the classifier uses (tests override it)."""
+    return make_client()
 
 
 def stub_classifier(event: IntakeEvent) -> TriageResult:

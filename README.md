@@ -66,7 +66,7 @@ Zapier's Webhooks POST step errors on any non-2xx response, so the Zap run shows
 | 413 | `payload_too_large` | Body over 64 KB, or no `Content-Length`. | No | Shorten the submission or fix the Zap step, then Zap replay. |
 | 422 | `invalid_payload` | Valid JSON, but a field is missing or too long; `details` lists each field. | Yes | Fix the Zap's field mapping, then Zap replay. A replay of this dead letter fails again. |
 | 429 | `daily_cap_reached` | `MAX_EVENTS_PER_DAY` LLM-calling intake events already today (UTC). | No | Wait for 00:00 UTC (or raise the cap on purpose), then Zap replay. |
-| 500 | `config_error` | Claude has no credential, rejects it (401/403), or rejects the request (other 4xx, e.g. an unknown `ANTHROPIC_MODEL`). | Yes | Fix the configuration; then replay dead letters. Replaying before the fix only fails again. |
+| 500 | `config_error` | Claude has no credential, rejects it (401/403), or rejects the request (other 4xx, e.g. an unknown `ANTHROPIC_MODEL`); or `MAX_EVENTS_PER_DAY` is not a whole number ≥ 0. | Yes | Fix the configuration; then replay dead letters. Replaying before the fix only fails again. |
 | 500 | `internal_error` | An unexpected exception (a bug). Body is plain text `Internal Server Error`; the log line says `internal_error`. | Yes | Read the log line and dead letter, fix the bug, then replay dead letters. |
 | 502 | `llm_invalid_output` | Claude's reply was not a valid triage result twice in a row. | Yes | Replay dead letters; if it repeats for one event, triage it by hand. |
 | 502 | `llm_refused` | Claude declined, even after the server-side fallbacks. | Yes | Triage it by hand; a replay will most likely be declined again. |
@@ -110,7 +110,7 @@ It prints the model and the triage result for a sample intake event. If the API 
 - **Duplicates can add a second sheet row.** A duplicate is answered 200 with `status: "duplicate"`, so Zap A's Sheets step still runs. Add a Filter step ("only continue if `status` is `processed`") before it if that matters.
 - **Duplicate detection covers 14 days.** Processed intake events are kept that long, so a delivery of the same intake event more than 14 days later is processed again.
 - **Two simultaneous deliveries of the same intake event** can both call Claude; the first stored result wins.
-- **Retention runs with the replay tool.** Dead letters older than 14 days are deleted only when `scripts/replay_dlq.py` runs (dry runs delete nothing). Processed intake events, including their summaries, are deleted from SQLite automatically after 14 days.
+- **Dead-letter retention runs with the replay tool.** Dead letters older than 14 days are deleted only when `scripts/replay_dlq.py` runs (dry runs delete nothing). Processed intake events, including their summaries, are deleted from SQLite automatically after 14 days.
 - **Zapier plan.** Zap A uses Webhooks by Zapier and three steps, which need a paid plan or the 14-day trial; Zap B works on Free.
 - **Shared-secret auth only:** no HMAC request signing.
 

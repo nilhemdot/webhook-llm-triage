@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -5,16 +6,19 @@ import secrets
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 import anthropic
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 
 from app.classifier import Classifier, LLMNotConfigured, LLMOutputInvalid, LLMRefused, TimeBudgetSpent, get_classifier
 from app.models import IntakeEvent, IntakeResponse
+from app.store import Store
 
 logger = logging.getLogger("webhook_llm_triage")
 logger.setLevel(logging.INFO)
@@ -30,7 +34,17 @@ _handler = _StdoutHandler()
 _handler.setFormatter(logging.Formatter("%(message)s"))  # each message is already one JSON object
 logger.addHandler(_handler)
 
-app = FastAPI(title="webhook-llm-triage")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.store = Store(Path(os.environ.get("DATA_DIR", "./data")))
+    try:
+        yield
+    finally:
+        app.state.store.close()
+
+
+app = FastAPI(title="webhook-llm-triage", lifespan=lifespan)
 
 MAX_INTAKE_BODY_BYTES = 64 * 1024  # a 20k-char message plus the other fields fits easily
 
@@ -58,6 +72,18 @@ def require_webhook_secret(request: Request, given: Annotated[str | None, Depend
     if not is_valid_webhook_secret(given):
         request.state.error = "unauthorized"
         raise HTTPException(status_code=401, detail="unauthorized")
+
+
+def get_store(request: Request) -> Store:
+    return request.app.state.store
+
+
+def idempotency_key(event: IntakeEvent, header: str | None) -> str:
+    """The Idempotency-Key header if sent, else the SHA-256 of the canonical JSON body."""
+    if header:
+        return header
+    canonical = json.dumps(event.model_dump(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _intake_body_size_ok(content_length: str | None) -> bool:
@@ -113,7 +139,19 @@ def healthz():
 
 
 @app.post("/intake", dependencies=[Depends(require_webhook_secret)])
-def intake(event: IntakeEvent, request: Request, classify: Annotated[Classifier, Depends(get_classifier)]) -> IntakeResponse:
+def intake(
+    event: IntakeEvent,
+    request: Request,
+    classify: Annotated[Classifier, Depends(get_classifier)],
+    store: Annotated[Store, Depends(get_store)],
+    idempotency_key_header: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> IntakeResponse:
+    key = idempotency_key(event, idempotency_key_header)
+    if stored := store.processed_response(key):
+        duplicate = IntakeResponse.model_validate_json(stored).model_copy(update={"status": "duplicate"})
+        request.state.event_id = duplicate.event_id  # log the original event_id so both deliveries can be traced
+        request.state.outcome = "duplicate"
+        return duplicate
     try:
         triage = classify(event)
     except Exception as exc:
@@ -122,5 +160,7 @@ def intake(event: IntakeEvent, request: Request, classify: Annotated[Classifier,
                 request.state.error = error
                 return JSONResponse(status_code=status_code, content={"error": error})
         raise
+    response = IntakeResponse(event_id=request.state.event_id, status="processed", triage=triage)
+    store.save_processed(key, response.model_dump_json())
     request.state.outcome = "processed"
-    return IntakeResponse(event_id=request.state.event_id, status="processed", triage=triage)
+    return response

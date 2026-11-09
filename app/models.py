@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 
 class IntakeEvent(BaseModel):
@@ -13,10 +13,19 @@ class IntakeEvent(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
 
 
+FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def sheet_safe(summary: str) -> str:
+    """Zap A writes the summary into a Google Sheets cell: a leading apostrophe stops it being read as a formula."""
+    # Drops the last character of a 280-char summary so the prefixed text still fits the 280 limit.
+    return "'" + summary[:279] if summary.startswith(FORMULA_STARTS) else summary
+
+
 class TriageResult(BaseModel):
     category: Literal["quote_request", "support_ticket", "access_request", "renewal_or_billing", "vendor_or_partner", "other"]
     urgency: Literal["low", "medium", "high"]
-    summary: str = Field(max_length=280)
+    summary: Annotated[str, Field(max_length=280), AfterValidator(sheet_safe)]
 
 
 class IntakeResponse(BaseModel):

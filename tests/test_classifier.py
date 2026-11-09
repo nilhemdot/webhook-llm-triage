@@ -202,10 +202,12 @@ def test_no_claude_credential_anywhere_returns_500_config_error_without_calling_
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))  # no `ant auth login` profile on disk
     monkeypatch.setenv("WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     claude = anthropic.Anthropic(max_retries=0, http_client=httpx2.Client(transport=httpx2.MockTransport(fake_claude.handler)))
     app.dependency_overrides[get_anthropic_client] = lambda: claude
     try:
-        response = TestClient(app).post("/intake", json=intake_event, headers=AUTH)
+        with TestClient(app) as client:
+            response = client.post("/intake", json=intake_event, headers=AUTH)
     finally:
         app.dependency_overrides.clear()
     assert response.status_code == 500

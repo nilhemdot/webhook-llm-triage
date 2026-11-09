@@ -36,8 +36,8 @@ Use it for intake events the service saved after a failure: 500, 502, 503 and 50
 The dead letters are on the Render disk, so run the tool from the Render service's **Shell**, where `DATA_DIR` is already `/var/data`:
 
 ```sh
-uv run python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET" --dry-run
-uv run python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET"
+uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET" --dry-run
+uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com --secret "$WEBHOOK_SECRET"
 ```
 
 - `--dry-run` lists each dead letter's event id, received time and reason, and marks those older than 14 days. It sends and changes nothing.

@@ -15,7 +15,7 @@ This is a demo. The Google Form is labelled "demo, do not enter real data", and 
 ## Webhook secret check
 
 - Every `POST /intake` must carry `X-Webhook-Secret`. It is compared with `secrets.compare_digest` (constant time, on bytes), so it can't be guessed through response timing.
-- Missing or wrong → 401, checked before the body is validated, so strangers learn nothing about the payload format. If `WEBHOOK_SECRET` is unset or empty, every request is refused (fail closed).
+- Missing or wrong → always 401, never 400 or 422, so strangers learn nothing about the payload format. If `WEBHOOK_SECRET` is unset or empty, every request is refused (fail closed).
 - Bodies over 64 KB (or without `Content-Length`) are refused with 413 before they are read.
 - The secret goes in a header, never in the URL.
 - Limitation: a shared secret, not HMAC request signing, so a leaked secret is valid until rotated.

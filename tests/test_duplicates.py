@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import time
 
 import httpx2
@@ -154,3 +155,23 @@ def test_expired_processed_intake_events_are_purged_on_a_later_write_without_a_r
     response = client.post("/intake", json=intake_event, headers={**AUTH, "Idempotency-Key": "first"})
     assert response.json()["status"] == "processed"
     assert fake_claude.calls == 3
+
+
+@pytest.mark.parametrize("existing_mode", [None, 0o644])
+def test_sqlite_file_and_its_journal_are_private_to_the_owner_even_under_a_permissive_umask(
+    configured_app, data_dir, permissive_umask, existing_mode
+):
+    db = data_dir / "triage.sqlite3"
+    if existing_mode:
+        Store(data_dir).close()
+        db.chmod(existing_mode)  # e.g. created before the store made it private
+    with TestClient(configured_app):
+        assert db.stat().st_mode & 0o777 == 0o600
+        # The default (rollback) journal mode is in use: SQLite creates db-journal during each write transaction.
+        writer = sqlite3.connect(db, isolation_level=None)
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute("INSERT INTO usage VALUES ('x', 1)")
+        journal_mode = (data_dir / "triage.sqlite3-journal").stat().st_mode & 0o777
+        writer.execute("ROLLBACK")
+        writer.close()
+    assert journal_mode == 0o600

@@ -1,4 +1,4 @@
-"""SQLite store in the data dir: processed intake events and their responses, keyed by idempotency key,
+"""SQLite store in the data dir: processed intake events and their responses, keyed by idempotency key and kept 14 days,
 and the daily cap's count of LLM-calling intake events per UTC day.
 Also the dead-letter file, dead_letter.jsonl, next to it."""
 
@@ -8,6 +8,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+
+RETENTION_S = 14 * 24 * 3600  # processed intake events are kept 14 days, like dead letters (D8)
+PURGE_EVERY_S = 3600
 
 
 class Store:
@@ -22,6 +25,15 @@ class Store:
                 "CREATE TABLE IF NOT EXISTS events (key TEXT PRIMARY KEY, status TEXT, response_json TEXT, created_at REAL)"
             )
             self._db.execute("CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, count INT)")
+            self._purged_at = 0.0
+            self._purge_expired()
+
+    def _purge_expired(self) -> None:
+        """Delete processed intake events older than 14 days; runs at most once an hour. Call with the lock held."""
+        now = time.time()
+        if now - self._purged_at >= PURGE_EVERY_S:
+            self._db.execute("DELETE FROM events WHERE created_at < ?", (now - RETENTION_S,))
+            self._purged_at = now
 
     def take_daily_cap_slot(self, day: str, cap: int) -> bool:
         """Count one LLM-calling intake event for `day`, unless the daily cap is already reached."""
@@ -42,6 +54,7 @@ class Store:
     def save_processed(self, key: str, response_json: str) -> None:
         # shortcut: two concurrent deliveries of one key both call Claude and the first save wins; fine for one Zap.
         with self._lock:
+            self._purge_expired()  # first, so an expired row with this key can't make the insert below a no-op
             self._db.execute(
                 "INSERT OR IGNORE INTO events VALUES (?, 'processed', ?, ?)", (key, response_json, time.time())
             )

@@ -108,8 +108,9 @@ It prints the model and the triage result for a sample intake event. If the API 
 - **One instance only.** State is SQLite and a JSONL file on one persistent disk, so the service can't scale out.
 - **Short downtime on every deploy.** A service with a disk gets no zero-downtime deploys; intake events that arrive in the gap error in Zapier and need a Zap replay.
 - **Duplicates can add a second sheet row.** A duplicate is answered 200 with `status: "duplicate"`, so Zap A's Sheets step still runs. Add a Filter step ("only continue if `status` is `processed`") before it if that matters.
+- **Duplicate detection covers 14 days.** Processed intake events are kept that long, so a delivery of the same intake event more than 14 days later is processed again.
 - **Two simultaneous deliveries of the same intake event** can both call Claude; the first stored result wins.
-- **Retention runs with the replay tool.** Dead letters older than 14 days are deleted only when `scripts/replay_dlq.py` runs (dry runs delete nothing). Processed intake events, including their summaries, stay in SQLite.
+- **Retention runs with the replay tool.** Dead letters older than 14 days are deleted only when `scripts/replay_dlq.py` runs (dry runs delete nothing). Processed intake events, including their summaries, are deleted from SQLite automatically after 14 days.
 - **Zapier plan.** Zap A uses Webhooks by Zapier and three steps, which need a paid plan or the 14-day trial; Zap B works on Free.
 - **Shared-secret auth only:** no HMAC request signing.
 

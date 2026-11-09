@@ -25,7 +25,7 @@ This is a demo. The Google Form is labelled "demo, do not enter real data", and 
 - **Logs:** one JSON line per request with only `event_id`, `path`, `status`, `latency_ms`, `outcome` and `error` codes. Message text, names, email addresses and secrets are never logged. A 422 response lists field locations and messages, not the input values.
 - **Claude:** only `company`, `subject` and `message` are sent; `name` and `email` never leave the service.
 - **Dead letters:** `dead_letter.jsonl` on the persistent disk holds the **full payload**, so a failed intake event can be replayed. Entries older than 14 days are deleted from it (and from `dead_letter.replayed.jsonl`) when `scripts/replay_dlq.py` runs; the tool prints ids and reasons, never payloads. The purge isn't automatic: run the tool at least every 14 days while the service is live.
-- **Processed intake events:** SQLite on the disk keeps each idempotency key with its response (category, urgency, summary) so duplicates can be answered. These are kept until the disk is deleted.
+- **Processed intake events:** SQLite on the disk keeps each idempotency key with its response (category, urgency, summary) so duplicates can be answered. Rows older than 14 days are deleted automatically (at startup and at most once an hour on later writes), so duplicate detection covers 14 days: a redelivery after that is processed as a new intake event.
 
 ## Cost controls
 

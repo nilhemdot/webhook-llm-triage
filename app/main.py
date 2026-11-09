@@ -7,12 +7,13 @@ import time
 import uuid
 from typing import Annotated
 
+import anthropic
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 
-from app.classifier import Classifier, get_classifier
+from app.classifier import Classifier, LLMOutputInvalid, LLMRefused, TimeBudgetSpent, get_classifier
 from app.models import IntakeEvent, IntakeResponse
 
 logger = logging.getLogger("webhook_llm_triage")
@@ -32,6 +33,15 @@ logger.addHandler(_handler)
 app = FastAPI(title="webhook-llm-triage")
 
 MAX_INTAKE_BODY_BYTES = 64 * 1024  # a 20k-char message plus the other fields fits easily
+
+# Most specific first: APITimeoutError is an APIConnectionError, and 503/529 are InternalServerErrors.
+LLM_FAILURES: list[tuple[type[Exception] | tuple[type[Exception], ...], int, str]] = [
+    (LLMRefused, 502, "llm_refused"),
+    (LLMOutputInvalid, 502, "llm_invalid_output"),
+    ((TimeBudgetSpent, anthropic.APITimeoutError), 504, "llm_timeout"),
+    ((anthropic.AuthenticationError, anthropic.PermissionDeniedError), 500, "config_error"),
+    ((anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError), 503, "llm_unavailable"),
+]
 
 webhook_secret_header = APIKeyHeader(name="X-Webhook-Secret", auto_error=False)
 
@@ -102,6 +112,13 @@ def healthz():
 
 @app.post("/intake", dependencies=[Depends(require_webhook_secret)])
 def intake(event: IntakeEvent, request: Request, classify: Annotated[Classifier, Depends(get_classifier)]) -> IntakeResponse:
-    triage = classify(event)
+    try:
+        triage = classify(event)
+    except Exception as exc:
+        for failure, status_code, error in LLM_FAILURES:
+            if isinstance(exc, failure):
+                request.state.error = error
+                return JSONResponse(status_code=status_code, content={"error": error})
+        raise
     request.state.outcome = "processed"
     return IntakeResponse(event_id=request.state.event_id, status="processed", triage=triage)

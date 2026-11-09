@@ -199,22 +199,26 @@ def intake(
     idempotency_key_header: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> IntakeResponse:
     payload = json.loads(body)  # already parsed once by FastAPI, so valid JSON; unlike `event` it keeps extra fields
-    key = idempotency_key(payload, idempotency_key_header)
-    if stored := store.processed_response(key):
-        duplicate = IntakeResponse.model_validate_json(stored).model_copy(update={"status": "duplicate"})
-        request.state.event_id = duplicate.event_id  # log the original event_id so both deliveries can be traced
-        request.state.outcome = "duplicate"
-        return duplicate
-    if (cap := max_events_per_day()) is None:
-        request.state.error = "config_error"
-        dead_letter(request, payload, "config_error", "MAX_EVENTS_PER_DAY is not a whole number >= 0")
-        return JSONResponse(status_code=500, content={"error": "config_error"})
-    # Outside the try below: a daily cap 429 is not a failure, so it is never dead-lettered.
-    if not store.take_daily_cap_slot(utc_today().isoformat(), cap):
-        request.state.error = "daily_cap_reached"
-        return JSONResponse(status_code=429, content={"error": "daily_cap_reached"})
+    # Every failure after this point (the secret check passed) appends a dead letter, so the event can be replayed.
     try:
+        key = idempotency_key(payload, idempotency_key_header)
+        if stored := store.processed_response(key):
+            duplicate = IntakeResponse.model_validate_json(stored).model_copy(update={"status": "duplicate"})
+            request.state.event_id = duplicate.event_id  # log the original event_id so both deliveries can be traced
+            request.state.outcome = "duplicate"
+            return duplicate
+        if (cap := max_events_per_day()) is None:
+            request.state.error = "config_error"
+            dead_letter(request, payload, "config_error", "MAX_EVENTS_PER_DAY is not a whole number >= 0")
+            return JSONResponse(status_code=500, content={"error": "config_error"})
+        # A daily cap 429 is not a failure, so it is never dead-lettered.
+        if not store.take_daily_cap_slot(utc_today().isoformat(), cap):
+            request.state.error = "daily_cap_reached"
+            return JSONResponse(status_code=429, content={"error": "daily_cap_reached"})
         triage = classify(event)
+        response = IntakeResponse(event_id=request.state.event_id, status="processed", triage=triage)
+        # Saved before answering: if the save fails, the 500 and dead letter below keep the event replayable.
+        store.save_processed(key, response.model_dump_json())
     except Exception as exc:
         for failure, status_code, error in LLM_FAILURES:
             if isinstance(exc, failure):
@@ -223,7 +227,5 @@ def intake(
                 return JSONResponse(status_code=status_code, content={"error": error})
         dead_letter(request, payload, "internal_error", f"{type(exc).__name__}: {exc}")
         raise
-    response = IntakeResponse(event_id=request.state.event_id, status="processed", triage=triage)
-    store.save_processed(key, response.model_dump_json())
     request.state.outcome = "processed"
     return response

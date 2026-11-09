@@ -1,10 +1,13 @@
 import json
+import sqlite3
 
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
 from app.classifier import get_classifier
+from app.main import get_store
+from app.store import Store
 from conftest import WEBHOOK_SECRET, claude_reply
 
 AUTH = {"X-Webhook-Secret": WEBHOOK_SECRET}
@@ -124,3 +127,28 @@ def test_failed_dead_letter_replay_is_dead_lettered_again_keeping_its_original_r
     [letter] = dead_letters(data_dir)
     assert letter["reason"] == "llm_unavailable"
     assert letter["received_at"] == received_at
+
+
+class StoreThatCannotSave(Store):
+    def save_processed(self, key, response_json):
+        raise sqlite3.OperationalError("disk I/O error")
+
+
+def test_failure_to_save_a_classified_intake_event_is_an_internal_error_dead_letter_not_a_200(
+    configured_app, fake_claude, intake_event, data_dir, caplog
+):
+    store = StoreThatCannotSave(data_dir)
+    configured_app.dependency_overrides[get_store] = lambda: store
+    event = {**intake_event, "form_response_id": "abc-123"}
+    caplog.set_level("INFO")
+    with TestClient(configured_app, raise_server_exceptions=False) as client:
+        response = client.post("/intake", json=event, headers=AUTH)
+    store.close()
+    assert response.status_code == 500  # Claude answered, but the event isn't recorded, so it must stay replayable
+    assert fake_claude.calls == 1
+    [letter] = dead_letters(data_dir)
+    assert letter["reason"] == "internal_error"
+    assert letter["error"] == "OperationalError: disk I/O error"
+    assert letter["payload"] == event
+    [line] = [json.loads(r.getMessage()) for r in caplog.records if r.name == "webhook_llm_triage"]
+    assert line["status"] == 500 and line["error"] == "internal_error"

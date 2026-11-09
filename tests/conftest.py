@@ -1,4 +1,5 @@
 import json
+import os
 
 import anthropic
 import httpx2
@@ -91,3 +92,11 @@ def intake_event():
         "subject": "Need a quote for 20 laptops",
         "message": "Please send pricing for 20 business laptops by next Friday.",
     }
+
+
+@pytest.fixture
+def permissive_umask():
+    """umask 0, so only an explicit mode keeps new files private."""
+    old = os.umask(0)
+    yield
+    os.umask(old)

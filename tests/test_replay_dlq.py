@@ -106,3 +106,21 @@ def test_dead_letter_written_by_the_app_during_a_replay_is_kept(configured_app, 
         replay(ARGS, client=httpx2.Client(transport=httpx2.MockTransport(first_replay_succeeds_then_a_new_event_fails)))
     [letter] = read(data_dir / "dead_letter.jsonl")
     assert letter["payload"] == other
+
+
+def test_files_the_replay_creates_are_private_to_the_owner_even_under_a_permissive_umask(
+    client, fake_claude, intake_event, data_dir, permissive_umask
+):
+    dead_letter_one_event(client, fake_claude, intake_event)
+    (data_dir / "dead_letter.jsonl").chmod(0o644)  # e.g. written before dead letters were made private
+    modes = []
+
+    def unavailable(request):
+        modes.append((data_dir / "dead_letter.replaying.jsonl").stat().st_mode & 0o777)
+        return httpx2.Response(503, text="proxy error")
+
+    replay(ARGS, client=httpx2.Client(transport=httpx2.MockTransport(unavailable)))
+    assert modes == [0o600]
+    assert (data_dir / "dead_letter.jsonl").stat().st_mode & 0o777 == 0o600  # the failure was re-queued here
+    replay(ARGS, client=httpx2.Client(transport=httpx2.MockTransport(lambda request: httpx2.Response(200))))
+    assert (data_dir / "dead_letter.replayed.jsonl").stat().st_mode & 0o777 == 0o600

@@ -104,3 +104,11 @@ def test_unexpected_exception_after_auth_appends_internal_error_dead_letter_with
     assert letter["reason"] == "internal_error"
     assert letter["error"] == "RuntimeError: bug"
     assert letter["payload"] == event
+
+
+def test_dead_letter_file_is_private_to_the_owner_even_under_a_permissive_umask(
+    client, fake_claude, intake_event, data_dir, permissive_umask
+):
+    fake_claude.queue(RATE_LIMITED)
+    client.post("/intake", json=intake_event, headers=AUTH)
+    assert (data_dir / "dead_letter.jsonl").stat().st_mode & 0o777 == 0o600

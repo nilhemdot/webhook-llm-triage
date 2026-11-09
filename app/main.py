@@ -17,11 +17,21 @@ from app.models import IntakeEvent, IntakeResponse
 
 logger = logging.getLogger("webhook_llm_triage")
 logger.setLevel(logging.INFO)
-_handler = logging.StreamHandler(sys.stdout)
+
+
+class _StdoutHandler(logging.StreamHandler):
+    """Writes to whatever sys.stdout is at emit time, so redirected or captured stdout still gets the line."""
+
+    stream = property(lambda self: sys.stdout, lambda self, _: None)
+
+
+_handler = _StdoutHandler()
 _handler.setFormatter(logging.Formatter("%(message)s"))  # each message is already one JSON object
 logger.addHandler(_handler)
 
 app = FastAPI(title="webhook-llm-triage")
+
+MAX_INTAKE_BODY_BYTES = 64 * 1024  # a 20k-char message plus the other fields fits easily
 
 webhook_secret_header = APIKeyHeader(name="X-Webhook-Secret", auto_error=False)
 
@@ -38,13 +48,22 @@ def require_webhook_secret(request: Request, given: Annotated[str | None, Depend
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
+def _intake_body_size_ok(content_length: str | None) -> bool:
+    return content_length is not None and content_length.isdigit() and int(content_length) <= MAX_INTAKE_BODY_BYTES
+
+
 @app.middleware("http")
 async def log_one_line_per_request(request: Request, call_next):
     request.state.event_id = uuid.uuid4().hex
     start = time.monotonic()
     status = 500
     try:
-        response = await call_next(request)
+        if request.url.path == "/intake" and not _intake_body_size_ok(request.headers.get("content-length")):
+            # Checked before the body is read, so strangers can't make us buffer and parse a huge body.
+            request.state.error = "payload_too_large"
+            response = JSONResponse(status_code=413, content={"error": "payload_too_large"})
+        else:
+            response = await call_next(request)
         status = response.status_code
         return response
     finally:

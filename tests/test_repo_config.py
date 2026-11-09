@@ -11,7 +11,7 @@ def test_env_example_lists_every_setting():
 
 def test_ci_workflow_runs_locked_test_suite():
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
-    for step in ("actions/checkout@v7", "astral-sh/setup-uv@v10", "uv sync --locked --dev", "uv run pytest -q"):
+    for step in ("actions/checkout@v7", "astral-sh/setup-uv@v10.3.3", "uv sync --locked --dev", "uv run pytest -q"):
         assert step in ci
 
 

@@ -131,3 +131,31 @@ def test_log_line_never_contains_message_text_email_or_secret(client, intake_eve
     text = "\n".join(r.getMessage() for r in caplog.records)
     for leaked in ("SECRET-PLANS-7731", "dana@example.com", WEBHOOK_SECRET, "wrong-secret-9911"):
         assert leaked not in text
+
+
+def test_oversized_name_company_or_email_returns_422_invalid_payload(client, intake_event):
+    for field, limit in (("name", 200), ("company", 200), ("email", 320)):
+        response = client.post("/intake", json={**intake_event, field: "x" * (limit + 1)}, headers=AUTH)
+        assert response.status_code == 422
+        assert any(d["loc"][-1] == field for d in response.json()["details"])
+
+
+def test_intake_body_over_64_kib_returns_413_before_secret_check(client, intake_event):
+    big = {**intake_event, "name": "x" * 65_536}
+    for headers in (AUTH, {"X-Webhook-Secret": "wrong"}):
+        response = client.post("/intake", json=big, headers=headers)
+        assert response.status_code == 413
+        assert response.json() == {"error": "payload_too_large"}
+
+
+def test_intake_body_without_content_length_returns_413(client, intake_event):
+    chunks = iter([json.dumps(intake_event).encode()])  # streamed body: no Content-Length header
+    response = client.post("/intake", content=chunks, headers={**AUTH, "Content-Type": "application/json"})
+    assert response.status_code == 413
+
+
+def test_each_request_writes_exactly_one_json_line_to_stdout(client, intake_event, capfd):
+    capfd.readouterr()
+    response = client.post("/intake", json=intake_event, headers=AUTH)
+    [line] = capfd.readouterr().out.splitlines()
+    assert json.loads(line)["event_id"] == response.json()["event_id"]

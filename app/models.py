@@ -6,9 +6,9 @@ from pydantic import BaseModel, Field
 class IntakeEvent(BaseModel):
     """The Google Form fields a Zap posts to /intake."""
 
-    name: str
-    company: str
-    email: str
+    name: str = Field(max_length=200)
+    company: str = Field(max_length=200)
+    email: str = Field(max_length=320)
     subject: str = Field(max_length=300)
     message: str = Field(min_length=1, max_length=20_000)
 

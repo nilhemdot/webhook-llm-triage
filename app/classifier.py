@@ -16,7 +16,7 @@ from app.models import IntakeEvent, TriageResult
 Classifier = Callable[[IntakeEvent], TriageResult]
 
 TIME_BUDGET_S = 20.0  # Zapier gives up at 30 s
-RE_ASK_MIN_S = 9.0  # one more call needs up to 8 s plus margin
+RE_ASK_MIN_S = 9.0  # the re-ask is one call with no SDK retry: up to 8 s plus margin
 CALL_TIMEOUT_S = 8.0
 MAX_TOKENS = 1024
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -50,6 +50,10 @@ class LLMOutputInvalid(Exception):
     """Claude's reply was not a valid triage result twice in a row."""
 
 
+class LLMNotConfigured(Exception):
+    """No credential for Claude can be found (no API key, auth token or profile)."""
+
+
 class TimeBudgetSpent(Exception):
     """Too little of the time budget is left for another call to Claude."""
 
@@ -72,10 +76,12 @@ def get_anthropic_client() -> anthropic.Anthropic:
 def _prompt(event: IntakeEvent) -> str:
     # Name and email are left out: the classifier doesn't need them, so they never leave the service.
     fields = {"company": event.company, "subject": event.subject, "message": event.message}
-    return f"<intake_event>\n{json.dumps(fields, ensure_ascii=False, indent=2)}\n</intake_event>"
+    # Escape < and > (still valid JSON) so message text can't close the <intake_event> data wrapper.
+    data = json.dumps(fields, ensure_ascii=False, indent=2).replace("<", "\\u003c").replace(">", "\\u003e")
+    return f"<intake_event>\n{data}\n</intake_event>"
 
 
-def _ask(client: anthropic.Anthropic, content: str):
+def _ask(client: anthropic.Anthropic, content: str, deadline: float):
     # beta path: the installed SDK's messages.parse() takes neither betas nor fallbacks (PLAN.md Allowed APIs).
     return client.beta.messages.create(
         model=model(),
@@ -85,6 +91,7 @@ def _ask(client: anthropic.Anthropic, content: str):
         betas=[FALLBACK_BETA],
         fallbacks="default",
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": TRIAGE_SCHEMA}},
+        timeout=min(CALL_TIMEOUT_S, deadline - monotonic()),
     )
 
 
@@ -103,10 +110,12 @@ def _triage_result(response) -> TriageResult:
 
 
 def classify(client: anthropic.Anthropic, event: IntakeEvent) -> TriageResult:
+    if client.api_key is None and client.auth_token is None and client.credentials is None:
+        raise LLMNotConfigured()  # otherwise the SDK raises a bare TypeError on the first request
     deadline = monotonic() + TIME_BUDGET_S
     content = _prompt(event)
     for attempt in (1, 2):
-        response = _ask(client, content)
+        response = _ask(client, content, deadline)
         if response.stop_reason == "refusal":
             raise LLMRefused()
         try:
@@ -116,6 +125,7 @@ def classify(client: anthropic.Anthropic, event: IntakeEvent) -> TriageResult:
                 raise LLMOutputInvalid(str(problem)) from problem
             if deadline - monotonic() < RE_ASK_MIN_S:
                 raise TimeBudgetSpent() from problem
+            client = client.with_options(max_retries=0)  # an SDK retry of the re-ask could overrun the time budget
             # Re-ask as one user turn: Sonnet 5.5 rejects assistant prefill.
             content = f"{_prompt(event)}\n\nA previous answer was not a valid triage result ({problem}). Answer again following the schema."
 

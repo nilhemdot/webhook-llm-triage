@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 
-from app.classifier import Classifier, LLMOutputInvalid, LLMRefused, TimeBudgetSpent, get_classifier
+from app.classifier import Classifier, LLMNotConfigured, LLMOutputInvalid, LLMRefused, TimeBudgetSpent, get_classifier
 from app.models import IntakeEvent, IntakeResponse
 
 logger = logging.getLogger("webhook_llm_triage")
@@ -39,8 +39,10 @@ LLM_FAILURES: list[tuple[type[Exception] | tuple[type[Exception], ...], int, str
     (LLMRefused, 502, "llm_refused"),
     (LLMOutputInvalid, 502, "llm_invalid_output"),
     ((TimeBudgetSpent, anthropic.APITimeoutError), 504, "llm_timeout"),
-    ((anthropic.AuthenticationError, anthropic.PermissionDeniedError), 500, "config_error"),
+    ((LLMNotConfigured, anthropic.AuthenticationError, anthropic.PermissionDeniedError), 500, "config_error"),
     ((anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError), 503, "llm_unavailable"),
+    # Last: any other API status error (400 rejected request, 404 unknown model, ...) means our request or settings are wrong.
+    (anthropic.APIStatusError, 500, "config_error"),
 ]
 
 webhook_secret_header = APIKeyHeader(name="X-Webhook-Secret", auto_error=False)

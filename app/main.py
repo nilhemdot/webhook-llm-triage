@@ -93,8 +93,13 @@ def get_store(request: Request) -> Store:
     return request.app.state.store
 
 
+async def received_body(request: Request) -> bytes:
+    """The request body exactly as received (cached by Starlette), extra fields and all."""
+    return await request.body()
+
+
 def idempotency_key(payload, header: str | None) -> str:
-    """The Idempotency-Key header if sent, else the SHA-256 of the canonical JSON body."""
+    """The Idempotency-Key header if sent, else the SHA-256 of the canonical JSON of the received body."""
     if header:
         return header
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -183,9 +188,11 @@ def intake(
     request: Request,
     classify: Annotated[Classifier, Depends(get_classifier)],
     store: Annotated[Store, Depends(get_store)],
+    body: Annotated[bytes, Depends(received_body)],
     idempotency_key_header: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> IntakeResponse:
-    key = idempotency_key(event.model_dump(), idempotency_key_header)
+    payload = json.loads(body)  # already parsed once by FastAPI, so valid JSON; unlike `event` it keeps extra fields
+    key = idempotency_key(payload, idempotency_key_header)
     if stored := store.processed_response(key):
         duplicate = IntakeResponse.model_validate_json(stored).model_copy(update={"status": "duplicate"})
         request.state.event_id = duplicate.event_id  # log the original event_id so both deliveries can be traced
@@ -193,7 +200,7 @@ def intake(
         return duplicate
     if (cap := max_events_per_day()) is None:
         request.state.error = "config_error"
-        dead_letter(request, event.model_dump(), "config_error", "MAX_EVENTS_PER_DAY is not a whole number >= 0")
+        dead_letter(request, payload, "config_error", "MAX_EVENTS_PER_DAY is not a whole number >= 0")
         return JSONResponse(status_code=500, content={"error": "config_error"})
     # Outside the try below: a daily cap 429 is not a failure, so it is never dead-lettered.
     if not store.take_daily_cap_slot(utc_today().isoformat(), cap):
@@ -205,9 +212,9 @@ def intake(
         for failure, status_code, error in LLM_FAILURES:
             if isinstance(exc, failure):
                 request.state.error = error
-                dead_letter(request, event.model_dump(), error, f"{type(exc).__name__}: {exc}")
+                dead_letter(request, payload, error, f"{type(exc).__name__}: {exc}")
                 return JSONResponse(status_code=status_code, content={"error": error})
-        dead_letter(request, event.model_dump(), "internal_error", f"{type(exc).__name__}: {exc}")
+        dead_letter(request, payload, "internal_error", f"{type(exc).__name__}: {exc}")
         raise
     response = IntakeResponse(event_id=request.state.event_id, status="processed", triage=triage)
     store.save_processed(key, response.model_dump_json())

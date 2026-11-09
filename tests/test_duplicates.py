@@ -109,3 +109,10 @@ def test_duplicate_of_a_formula_summary_comes_back_prefixed_once(client, fake_cl
     response = client.post("/intake", json=intake_event, headers=AUTH)
     assert response.json()["status"] == "duplicate"
     assert response.json()["triage"]["summary"] == "'=1+1"
+
+
+def test_bodies_differing_only_in_an_extra_unknown_field_are_not_duplicates(client, fake_claude, intake_event):
+    client.post("/intake", json=intake_event, headers=AUTH)
+    response = client.post("/intake", json={**intake_event, "form_response_id": "abc-123"}, headers=AUTH)
+    assert response.json()["status"] == "processed"
+    assert fake_claude.calls == 2

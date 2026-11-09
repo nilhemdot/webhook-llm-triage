@@ -2,7 +2,9 @@ import json
 
 import httpx2
 import pytest
+from fastapi.testclient import TestClient
 
+from app.classifier import get_classifier
 from conftest import WEBHOOK_SECRET, claude_reply
 
 AUTH = {"X-Webhook-Secret": WEBHOOK_SECRET}
@@ -78,3 +80,27 @@ def test_dead_letter_payload_is_never_logged(client, fake_claude, intake_event, 
     logged = caplog.text + capsys.readouterr().out
     assert intake_event["email"] not in logged
     assert intake_event["message"] not in logged
+
+
+def test_llm_failure_dead_letter_keeps_the_raw_body_with_extra_fields(client, fake_claude, intake_event, data_dir):
+    event = {**intake_event, "form_response_id": "abc-123"}
+    fake_claude.queue(RATE_LIMITED)
+    assert client.post("/intake", json=event, headers=AUTH).status_code == 503
+    [letter] = dead_letters(data_dir)
+    assert letter["payload"] == event
+
+
+def test_unexpected_exception_after_auth_appends_internal_error_dead_letter_with_raw_body(
+    configured_app, intake_event, data_dir
+):
+    def broken_classifier(event):
+        raise RuntimeError("bug")
+
+    configured_app.dependency_overrides[get_classifier] = lambda: broken_classifier
+    event = {**intake_event, "form_response_id": "abc-123"}
+    with TestClient(configured_app, raise_server_exceptions=False) as client:
+        assert client.post("/intake", json=event, headers=AUTH).status_code == 500
+    [letter] = dead_letters(data_dir)
+    assert letter["reason"] == "internal_error"
+    assert letter["error"] == "RuntimeError: bug"
+    assert letter["payload"] == event

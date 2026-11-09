@@ -69,3 +69,18 @@ def test_security_covers_secrets_logs_retention_cost_and_prompt_injection():
 def test_uat_and_failure_trace_are_templates_with_placeholders():
     for doc in ("docs/UAT.md", "docs/FAILURE_TRACE.md"):
         assert "[X]" in (ROOT / doc).read_text()
+
+
+def test_readme_has_the_ci_badge():
+    readme = (ROOT / "README.md").read_text()
+    workflow = "https://github.com/nilhemdot/webhook-llm-triage/actions/workflows/ci.yml"
+    assert f"[![CI]({workflow}/badge.svg)]({workflow})" in readme
+
+
+def test_readme_and_script_replay_commands_match_the_runbook():
+    replay_commands = lambda text: re.findall(r"^\s*(uv run .*replay_dlq\.py.*?)\s*$", text, re.M)  # noqa: E731
+    runbook = replay_commands((ROOT / "RUNBOOK.md").read_text())
+    assert runbook and all("--no-dev" in c and "--secret" not in c for c in runbook)
+    assert replay_commands((ROOT / "README.md").read_text()) == runbook
+    usage = replay_commands((ROOT / "scripts" / "replay_dlq.py").read_text())
+    assert usage == [runbook[-1] + " [--dry-run]"]

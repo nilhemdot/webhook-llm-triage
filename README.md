@@ -79,9 +79,11 @@ Every request leaves one JSON log line (`event_id`, `path`, `status`, `latency_m
 
 Every intake event that fails after the webhook secret check (400, 422, 500, 502, 503, 504) is appended to `DATA_DIR/dead_letter.jsonl` with its event id, idempotency key, received time, reason, error and **full payload**. The payload is kept so the event can be replayed; it goes to that file only, never to the logs.
 
+Run it from the Render service's **Shell**, where `DATA_DIR` is already `/var/data` and `WEBHOOK_SECRET` is already set (see [RUNBOOK.md](RUNBOOK.md)):
+
 ```sh
-DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com --dry-run  # list only
-DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com
+uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com --dry-run
+uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com
 ```
 
 The tool reads the webhook secret from the `WEBHOOK_SECRET` environment variable only (never put it on the command line) and exits with an error if it is unset. It warns if `--url` is `http://`, since the secret would then travel unencrypted.

@@ -1,9 +1,11 @@
 """Replay dead letters to /intake, and purge dead letters and replayed entries older than 14 days (D8).
 
-    DATA_DIR=/var/data uv run python scripts/replay_dlq.py --url https://<app>.onrender.com [--dry-run]
+Run from the Render service's Shell, where DATA_DIR (/var/data) and WEBHOOK_SECRET are already set:
 
-The webhook secret is read from the WEBHOOK_SECRET environment variable (already set in the Render Shell),
-never from the command line, where it would land in shell history and the process list.
+    uv run --no-dev python scripts/replay_dlq.py --url https://<app>.onrender.com [--dry-run]
+
+The webhook secret is read from the WEBHOOK_SECRET environment variable only, never from the command line,
+where it would land in shell history and the process list.
 
 Successes (200, including "duplicate") move to dead_letter.replayed.jsonl. A replay the app rejects after auth is
 dead-lettered again by the app, with its new reason and error but its original received_at, and replaces the old

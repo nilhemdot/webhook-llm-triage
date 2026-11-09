@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import httpx2
+import pytest
 from fastapi.testclient import TestClient
 
 from conftest import WEBHOOK_SECRET
@@ -9,7 +10,7 @@ from scripts.replay_dlq import main as replay
 
 AUTH = {"X-Webhook-Secret": WEBHOOK_SECRET}
 RATE_LIMITED = httpx2.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}})
-ARGS = ["--url", "http://testserver", "--secret", WEBHOOK_SECRET]
+ARGS = ["--url", "http://testserver"]  # the secret comes from WEBHOOK_SECRET, set by configured_app
 
 
 def read(path):
@@ -124,3 +125,43 @@ def test_files_the_replay_creates_are_private_to_the_owner_even_under_a_permissi
     assert (data_dir / "dead_letter.jsonl").stat().st_mode & 0o777 == 0o600  # the failure was re-queued here
     replay(ARGS, client=httpx2.Client(transport=httpx2.MockTransport(lambda request: httpx2.Response(200))))
     assert (data_dir / "dead_letter.replayed.jsonl").stat().st_mode & 0o777 == 0o600
+
+
+def test_replay_has_no_secret_argument(client, capsys):
+    with pytest.raises(SystemExit):
+        replay([*ARGS, "--secret", WEBHOOK_SECRET], client=client)
+
+
+def test_replay_reads_the_secret_from_the_environment(client, fake_claude, intake_event, data_dir):
+    dead_letter_one_event(client, fake_claude, intake_event)
+    sent = []
+
+    def record(request):
+        sent.append(request.headers["X-Webhook-Secret"])
+        return httpx2.Response(200)
+
+    assert replay(ARGS, client=httpx2.Client(transport=httpx2.MockTransport(record))) == 0
+    assert sent == [WEBHOOK_SECRET]
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_replay_without_webhook_secret_exits_non_zero_and_changes_nothing(
+    client, fake_claude, intake_event, data_dir, monkeypatch, capsys, value
+):
+    dead_letter_one_event(client, fake_claude, intake_event)
+    before = (data_dir / "dead_letter.jsonl").read_bytes()
+    if value is None:
+        monkeypatch.delenv("WEBHOOK_SECRET")
+    else:
+        monkeypatch.setenv("WEBHOOK_SECRET", value)
+    assert replay(ARGS, client=client) != 0
+    assert "WEBHOOK_SECRET" in capsys.readouterr().err
+    assert (data_dir / "dead_letter.jsonl").read_bytes() == before
+    assert fake_claude.calls == 1
+
+
+def test_replay_warns_when_the_secret_would_be_sent_over_plain_http(client, capsys):
+    replay(["--url", "http://localhost:8000"], client=client)
+    assert "unencrypted" in capsys.readouterr().err
+    replay(["--url", "https://app.example"], client=client)
+    assert "unencrypted" not in capsys.readouterr().err

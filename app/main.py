@@ -65,6 +65,15 @@ def utc_today() -> date:
     return datetime.now(UTC).date()
 
 
+def max_events_per_day() -> int | None:
+    """The daily cap from MAX_EVENTS_PER_DAY (default 200), or None if it is not a whole number >= 0."""
+    try:
+        cap = int(os.environ.get("MAX_EVENTS_PER_DAY", "200"))
+    except ValueError:
+        return None
+    return cap if cap >= 0 else None
+
+
 webhook_secret_header = APIKeyHeader(name="X-Webhook-Secret", auto_error=False)
 
 
@@ -182,8 +191,12 @@ def intake(
         request.state.event_id = duplicate.event_id  # log the original event_id so both deliveries can be traced
         request.state.outcome = "duplicate"
         return duplicate
+    if (cap := max_events_per_day()) is None:
+        request.state.error = "config_error"
+        dead_letter(request, event.model_dump(), "config_error", "MAX_EVENTS_PER_DAY is not a whole number >= 0")
+        return JSONResponse(status_code=500, content={"error": "config_error"})
     # Outside the try below: a daily cap 429 is not a failure, so it is never dead-lettered.
-    if not store.take_daily_cap_slot(utc_today().isoformat(), int(os.environ.get("MAX_EVENTS_PER_DAY", "200"))):
+    if not store.take_daily_cap_slot(utc_today().isoformat(), cap):
         request.state.error = "daily_cap_reached"
         return JSONResponse(status_code=429, content={"error": "daily_cap_reached"})
     try:

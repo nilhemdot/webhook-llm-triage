@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -78,12 +79,30 @@ def get_store(request: Request) -> Store:
     return request.app.state.store
 
 
-def idempotency_key(event: IntakeEvent, header: str | None) -> str:
+def idempotency_key(payload, header: str | None) -> str:
     """The Idempotency-Key header if sent, else the SHA-256 of the canonical JSON body."""
     if header:
         return header
-    canonical = json.dumps(event.model_dump(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+# Sent by scripts/replay_dlq.py, which keeps its own failed dead letters with their original received_at.
+DEAD_LETTER_REPLAY_HEADER = "X-Dead-Letter-Replay"
+
+
+def dead_letter(request: Request, payload, reason: str, error) -> None:
+    """Save a failed intake event to the dead-letter file. The payload goes there only, never to logs."""
+    if request.headers.get(DEAD_LETTER_REPLAY_HEADER):
+        return
+    request.app.state.store.add_dead_letter({
+        "event_id": request.state.event_id,
+        "key": idempotency_key(payload, request.headers.get("Idempotency-Key")),
+        "received_at": datetime.now(UTC).isoformat(),
+        "reason": reason,
+        "error": error,
+        "payload": payload,
+    })
 
 
 def _intake_body_size_ok(content_length: str | None) -> bool:
@@ -124,12 +143,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         request.state.error = "unauthorized"
         return JSONResponse(status_code=401, content={"detail": "unauthorized"})
     errors = exc.errors()
+    # exc.body: the raw text for malformed JSON, the parsed JSON otherwise (bytes or unset for odd content types).
+    payload = exc.body.decode(errors="replace") if isinstance(exc.body, bytes) else exc.body
+    if not isinstance(payload, (str, dict, list)):
+        payload = None
     if any(e["type"] == "json_invalid" for e in errors):
         request.state.error = "malformed_json"
+        dead_letter(request, payload, "malformed_json", errors[0]["ctx"]["error"])
         return JSONResponse(status_code=400, content={"error": "malformed_json"})
     request.state.error = "invalid_payload"
     # loc/msg/type only: the raw input would echo message text and email back.
     details = [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in errors]
+    dead_letter(request, payload, "invalid_payload", details)
     return JSONResponse(status_code=422, content={"error": "invalid_payload", "details": details})
 
 
@@ -146,7 +171,7 @@ def intake(
     store: Annotated[Store, Depends(get_store)],
     idempotency_key_header: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> IntakeResponse:
-    key = idempotency_key(event, idempotency_key_header)
+    key = idempotency_key(event.model_dump(), idempotency_key_header)
     if stored := store.processed_response(key):
         duplicate = IntakeResponse.model_validate_json(stored).model_copy(update={"status": "duplicate"})
         request.state.event_id = duplicate.event_id  # log the original event_id so both deliveries can be traced
@@ -158,7 +183,9 @@ def intake(
         for failure, status_code, error in LLM_FAILURES:
             if isinstance(exc, failure):
                 request.state.error = error
+                dead_letter(request, event.model_dump(), error, f"{type(exc).__name__}: {exc}")
                 return JSONResponse(status_code=status_code, content={"error": error})
+        dead_letter(request, event.model_dump(), "internal_error", f"{type(exc).__name__}: {exc}")
         raise
     response = IntakeResponse(event_id=request.state.event_id, status="processed", triage=triage)
     store.save_processed(key, response.model_dump_json())

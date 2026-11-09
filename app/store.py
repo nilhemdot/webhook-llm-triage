@@ -1,5 +1,7 @@
-"""SQLite store in the data dir: processed intake events and their responses, keyed by idempotency key."""
+"""SQLite store in the data dir: processed intake events and their responses, keyed by idempotency key.
+Also the dead-letter file, dead_letter.jsonl, next to it."""
 
+import json
 import sqlite3
 import threading
 import time
@@ -9,6 +11,7 @@ from pathlib import Path
 class Store:
     def __init__(self, data_dir: Path):
         data_dir.mkdir(parents=True, exist_ok=True)
+        self._dead_letter_path = data_dir / "dead_letter.jsonl"
         # Opened in the lifespan but used from FastAPI's worker threads; the lock serialises access.
         self._db = sqlite3.connect(data_dir / "triage.sqlite3", check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -28,6 +31,11 @@ class Store:
             self._db.execute(
                 "INSERT OR IGNORE INTO events VALUES (?, 'processed', ?, ?)", (key, response_json, time.time())
             )
+
+    def add_dead_letter(self, dead_letter: dict) -> None:
+        # Reopened on every append: the replay command moves the file aside, and a held handle would follow it.
+        with self._lock, self._dead_letter_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dead_letter, ensure_ascii=False) + "\n")
 
     def close(self) -> None:
         with self._lock:

@@ -18,7 +18,11 @@ class Store:
         data_dir.mkdir(parents=True, exist_ok=True)
         self._dead_letter_path = data_dir / "dead_letter.jsonl"
         # Opened in the lifespan but used from FastAPI's worker threads; the lock serialises access.
-        self._db = sqlite3.connect(data_dir / "triage.sqlite3", check_same_thread=False, isolation_level=None)
+        db_path = data_dir / "triage.sqlite3"
+        # 0600 whatever the umask, also for a file made before; SQLite gives its -journal the database file's mode.
+        os.close(os.open(db_path, os.O_RDWR | os.O_CREAT, 0o600))
+        db_path.chmod(0o600)
+        self._db = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
         with self._lock:
             self._db.execute(

@@ -59,15 +59,27 @@ def fake_claude():
 
 
 @pytest.fixture
-def client(monkeypatch, fake_claude):
+def data_dir(tmp_path):
+    return tmp_path / "data"
+
+
+@pytest.fixture
+def configured_app(monkeypatch, fake_claude, data_dir):
+    """The app with test settings and the fake Claude; enter `TestClient(configured_app)` to start it."""
     monkeypatch.setenv("WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
     claude = anthropic.Anthropic(
         api_key="test", max_retries=0, http_client=httpx2.Client(transport=httpx2.MockTransport(fake_claude.handler))
     )
     app.dependency_overrides[get_anthropic_client] = lambda: claude
-    with TestClient(app) as client:
-        yield client
+    yield app
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client(configured_app):
+    with TestClient(configured_app) as client:
+        yield client
 
 
 @pytest.fixture

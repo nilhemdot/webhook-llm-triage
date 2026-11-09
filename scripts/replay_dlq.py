@@ -27,6 +27,14 @@ def lines(entries: list[dict]) -> str:
     return "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries)
 
 
+def write_private(path: Path, text: str, append: bool = False) -> None:
+    """Write a file only its owner can read (0600 whatever the umask): dead letters hold full payloads."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC), 0o600)
+    with os.fdopen(fd, "a" if append else "w", encoding="utf-8") as f:
+        os.fchmod(fd, 0o600)
+        f.write(text)
+
+
 def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", required=True, help="service base URL, e.g. https://<app>.onrender.com")
@@ -50,6 +58,7 @@ def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> 
 
     if not working.exists() and queue.exists():
         queue.replace(working)  # the app's next dead letter starts a fresh queue file, so nothing it writes is lost
+        working.chmod(0o600)  # a rename keeps the old mode
     client = client or httpx2.Client(timeout=30.0)
     done, failed = [], []
     for e in read(working):
@@ -74,9 +83,8 @@ def main(argv: list[str] | None = None, client: httpx2.Client | None = None) -> 
             failed.append(e)
 
     replayed.parent.mkdir(parents=True, exist_ok=True)
-    replayed.write_text(lines([e for e in read(replayed) if not expired(e)] + done), encoding="utf-8")
-    with queue.open("a", encoding="utf-8") as f:
-        f.write(lines(failed))
+    write_private(replayed, lines([e for e in read(replayed) if not expired(e)] + done))
+    write_private(queue, lines(failed), append=True)
     working.unlink(missing_ok=True)
     print(f"replayed {len(done)}, still failing {len(failed)}")
     return 0 if not failed else 1

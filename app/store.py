@@ -3,6 +3,7 @@ and the daily cap's count of LLM-calling intake events per UTC day.
 Also the dead-letter file, dead_letter.jsonl, next to it."""
 
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -47,7 +48,10 @@ class Store:
 
     def add_dead_letter(self, dead_letter: dict) -> None:
         # Reopened on every append: the replay command moves the file aside, and a held handle would follow it.
-        with self._lock, self._dead_letter_path.open("a", encoding="utf-8") as f:
+        # 0600 whatever the umask (fchmod also fixes a file made before): it holds full payloads.
+        fd = os.open(self._dead_letter_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with self._lock, os.fdopen(fd, "a", encoding="utf-8") as f:
+            os.fchmod(fd, 0o600)
             f.write(json.dumps(dead_letter, ensure_ascii=False) + "\n")
 
     def close(self) -> None:

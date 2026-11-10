@@ -1,0 +1,29 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec).
+# Render installs uv itself because uv.lock is at the repo root (https://render.com/docs/uv-version),
+# and reads the Python version from .python-version (https://render.com/docs/python-version).
+services:
+  - type: web
+    name: webhook-llm-triage
+    runtime: python
+    plan: starter # a persistent disk needs a paid instance
+    buildCommand: uv sync --locked --no-dev
+    # --no-dev: plain `uv run` would sync the dev group at boot. --no-access-log: one JSON log line per request, not two.
+    startCommand: uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log
+    healthCheckPath: /healthz
+    # A disk means one instance and no zero-downtime deploys: each deploy has a short gap (see RUNBOOK.md).
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # Secrets: Render prompts for these when the Blueprint is first created. Later changes go in the dashboard.
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-5-5
+      - key: DATA_DIR
+        value: /var/data
+      - key: MAX_EVENTS_PER_DAY
+        value: "200"

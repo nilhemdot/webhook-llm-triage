@@ -1,0 +1,21 @@
+[project]
+name = "webhook-llm-triage"
+version = "0.1.0"
+description = "Zapier webhook to LLM triage service with retries, dedupe and a dead-letter queue"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=2,<3",
+    "fastapi>=0.162.2",
+    "httpx2>=2.16.0",
+    "pydantic>=2.14.3",
+    "uvicorn>=0.54.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

@@ -10,10 +10,10 @@ Owner: **agent** (can be automated) or **human** (needs a sign-in, a click in a 
 | 1 | Sign in with `ant auth login`, run `scripts/smoke.py` | human + agent | done 2026-11-10 | `model=claude-sonnet-5-5 {"category":"support_ticket","urgency":"high",...}` |
 | 2 | Server API key in a workspace with a monthly spend limit | human | key in use; **spend limit unverified** | Console → Workspaces → Default → Limits |
 | 3 | Render Blueprint applied, secrets set, `/healthz` live | agent | done 2026-11-10 | `curl https://webhook-llm-triage-pyhs.onrender.com/healthz` → 200; unsigned `/intake` → 401; signed → 200 `processed` |
-| 4 | Google Form "demo, do not enter real data" (name, company, email, subject, message), **linked to a Sheet** | human, or agent via browser | open | Form exists; Responses tab links a Sheet |
-| 5 | Zap A: Forms New Form Response → Webhooks POST (`X-Webhook-Secret`, `Idempotency-Key` = response ID) → Sheets Create Spreadsheet Row | human, or agent via browser | open | A test submission shows as a triaged Sheet row |
-| 5b | Zap B: Zapier Manager New Zap Error → Sheets row | human, or agent via browser | open | A forced failure shows as a row |
-| 6 | UAT table filled; one real failure traced; screenshots in `docs/img/` | agent | open | No `[X]` left in `docs/UAT.md`, `docs/FAILURE_TRACE.md` |
+| 4 | Google Form "demo, do not enter real data" (name, company, email, subject, message), **linked to a Sheet** | agent via browser | done 2026-11-10 | Form linked to "Support intake (Responses)"; Message capped at 20,000 chars |
+| 5 | Zap A: Forms New Form Response → Webhooks POST (`X-Webhook-Secret`, `Idempotency-Key` = response ID) → Sheets Create Spreadsheet Row | agent via browser | done 2026-11-10 | UAT rows 1–5, 8–10 on the Triage tab |
+| 5b | Zap B: Zapier Manager New Zap Error → Sheets row | agent via browser | done 2026-11-10 | Zap errors row for run `01bdd0f9…` |
+| 6 | UAT table filled; one real failure traced; screenshots in `docs/img/` | agent | done 2026-11-10 | `tests/test_docs.py` asserts no `[X]` left |
 | 7 | Tick #8 boxes with evidence; close #8, then #1 | agent | open | `gh issue view 8` closed |
 
 ## Current-docs check (2026-11-10)

@@ -64,6 +64,16 @@ There is one secret at a time, so intake events sent between steps 2 and 3 get 4
 
 Rotate both right away if a secret may have leaked; a leaked webhook secret can spend up to the daily cap per day until it is rotated.
 
+## Zapier plan
+
+Zap A ("Support intake triage") needs a paid Zapier plan: it has two actions, and its Webhooks step is a premium app. The Professional trial ends on 2026-11-22 and the account drops to Free unless someone upgrades. After that:
+
+- Zapier turns Zap A off, because Free allows one action per Zap. New form responses no longer reach `/intake`.
+- Runs that reach the Webhooks step are put On hold, not Errored. Zapier keeps their trigger data.
+- After an upgrade, turn Zap A back on, then replay the held runs from Zap History.
+
+Zap B (Zapier Manager → Sheets) has one action and no premium app, so it keeps running on Free. The Render service is unaffected.
+
 ## Deploys
 
 Each deploy has a short gap (a service with a disk gets no zero-downtime deploys). Zap A runs in the gap show Errored; Zap replay them after the deploy is live.

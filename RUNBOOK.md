@@ -82,7 +82,7 @@ Each deploy has a short gap (a service with a disk gets no zero-downtime deploys
 
 | Problem | Escalate to |
 |---|---|
-| Configuration, secrets, Render service, cost | Service owner: [X] |
-| Zap A / Zap B behaviour, Zapier plan | Zap builder: [X] |
-| Claude API errors that persist (503/504 for more than [X] minutes) | Check status.anthropic.com, then the service owner |
+| Configuration, secrets, Render service, cost | Service owner: `@nilhemdot` |
+| Zap A / Zap B behaviour, Zapier plan | Zap builder: `@nilhemdot` |
+| Claude API errors that persist (503/504 for more than 15 minutes) | Check status.anthropic.com, then the service owner |
 | A bug (500 `internal_error`) | Open a GitHub issue with the `event_id` and log line (no payload) |

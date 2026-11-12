@@ -67,7 +67,7 @@ def test_security_covers_secrets_logs_retention_cost_and_prompt_injection():
 
 
 def test_uat_and_failure_trace_are_filled_in_from_real_runs():
-    for doc in ("docs/UAT.md", "docs/FAILURE_TRACE.md"):
+    for doc in ("docs/UAT.md", "docs/FAILURE_TRACE.md", "RUNBOOK.md"):
         assert "[X]" not in (ROOT / doc).read_text()
 
 

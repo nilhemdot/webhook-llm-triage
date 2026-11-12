@@ -66,9 +66,9 @@ def test_security_covers_secrets_logs_retention_cost_and_prompt_injection():
         assert topic in security
 
 
-def test_uat_and_failure_trace_are_templates_with_placeholders():
+def test_uat_and_failure_trace_are_filled_in_from_real_runs():
     for doc in ("docs/UAT.md", "docs/FAILURE_TRACE.md"):
-        assert "[X]" in (ROOT / doc).read_text()
+        assert "[X]" not in (ROOT / doc).read_text()
 
 
 def test_readme_has_the_ci_badge():

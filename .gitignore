@@ -3,5 +3,5 @@ PLAN.md
 data/
 .venv/
 __pycache__/
-.claude/
-.mcp.json
+.claude/*
+!.claude/settings.json
